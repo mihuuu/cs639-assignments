@@ -39,7 +39,19 @@ def load_embedding(vocab, emb_file, emb_size):
     Return:
         emb: (np.array), embedding matrix of size (|vocab|, emb_size) 
     """
-    raise NotImplementedError()
+    emb = np.random.uniform(-0.08, 0.08, (len(vocab), emb_size))
+    
+    with open(emb_file, 'r', encoding='utf-8') as f:
+        for line in f:
+            parts = line.strip().split()
+            word = parts[0]
+            if word in vocab:
+                word_id = vocab[word]
+                emb_vec = np.array([float(x) for x in parts[1:]])
+                if len(emb_vec) == emb_size:
+                    emb[word_id] = emb_vec
+    
+    return emb
 
 
 class DanModel(BaseModel):
@@ -57,21 +69,55 @@ class DanModel(BaseModel):
         Define the model's parameters, e.g., embedding layer, feedforward layer.
         Pass hyperparameters explicitly or use self.args to access the hyperparameters.
         """
-        raise NotImplementedError()
+        # Embedding layer
+        self.embeddings = nn.Embedding(len(self.vocab), self.args.emb_size, 
+                                       padding_idx=self.vocab.pad_id)
+        
+        # Dropout layers
+        self.word_dropout = nn.Dropout(self.args.word_drop)
+        self.emb_dropout = nn.Dropout(self.args.emb_drop)
+        self.hid_dropout = nn.Dropout(self.args.hid_drop)
+        
+        # Feedforward layers
+        self.hidden_layers = nn.ModuleList()
+        
+        # First hidden layer: from embedding to hidden
+        self.hidden_layers.append(nn.Linear(self.args.emb_size, self.args.hid_size))
+        
+        # Additional hidden layers: from hidden to hidden
+        for _ in range(self.args.hid_layer - 1):
+            self.hidden_layers.append(nn.Linear(self.args.hid_size, self.args.hid_size))
+        
+        # Output layer: from hidden to tag scores
+        self.output_layer = nn.Linear(self.args.hid_size, self.tag_size)
+        
+        # Activation function
+        self.activation = nn.ReLU()
 
     def init_model_parameters(self):
         """
         Initialize the model's parameters by uniform sampling from a range [-v, v], e.g., v=0.08
         Pass hyperparameters explicitly or use self.args to access the hyperparameters.
         """
-        raise NotImplementedError()
+        init_range = 0.08
+        
+        nn.init.uniform_(self.embeddings.weight, -init_range, init_range)
+        
+        for layer in self.hidden_layers:
+            nn.init.uniform_(layer.weight, -init_range, init_range)
+            nn.init.uniform_(layer.bias, -init_range, init_range)
+        
+        nn.init.uniform_(self.output_layer.weight, -init_range, init_range)
+        nn.init.uniform_(self.output_layer.bias, -init_range, init_range)
 
     def copy_embedding_from_numpy(self):
         """
         Load pre-trained word embeddings from numpy.array to nn.embedding
         Pass hyperparameters explicitly or use self.args to access the hyperparameters.
         """
-        raise NotImplementedError()
+        emb_matrix = load_embedding(self.vocab, self.args.emb_file, self.args.emb_size)
+        
+        self.embeddings.weight.data.copy_(torch.from_numpy(emb_matrix))
 
     def forward(self, x):
         """
@@ -84,4 +130,39 @@ class DanModel(BaseModel):
         Return:
             scores: (torch.FloatTensor), [batch_size, ntags]
         """
-        raise NotImplementedError()
+        # Apply word dropout
+        if self.training and self.args.word_drop > 0:
+            mask = torch.rand(x.shape, device=x.device) > self.args.word_drop
+            x = x * mask.long()
+        
+        # Get word embeddings: [batch_size, seq_length, emb_size]
+        embeds = self.embeddings(x)
+        embeds = self.emb_dropout(embeds)
+        
+        # Pool embeddings
+        mask = (x != self.vocab.pad_id).float().unsqueeze(2)  # [batch_size, seq_length, 1]
+        
+        if self.args.pooling_method == "avg":
+            # Average pooling
+            sum_embeds = (embeds * mask).sum(dim=1)  # [batch_size, emb_size]
+            seq_lengths = mask.sum(dim=1)  # [batch_size, 1]
+            h = sum_embeds / (seq_lengths + 1e-10)
+        elif self.args.pooling_method == "sum":
+            # Sum pooling
+            h = (embeds * mask).sum(dim=1)
+        elif self.args.pooling_method == "max":
+            # Max pooling
+            embeds_masked = embeds.masked_fill(mask == 0, -1e9)
+            h = embeds_masked.max(dim=1)[0]
+        else:
+            raise ValueError(f"Unknown pooling method: {self.args.pooling_method}")
+        
+        # Pass through feedforward layers
+        for layer in self.hidden_layers:
+            h = layer(h)
+            h = self.activation(h)
+            h = self.hid_dropout(h)
+        
+        scores = self.output_layer(h)
+        
+        return scores
