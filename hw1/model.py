@@ -101,7 +101,9 @@ class DanModel(BaseModel):
         """
         init_range = 0.08
         
-        nn.init.uniform_(self.embeddings.weight, -init_range, init_range)
+        # Only initialize embeddings if not using pre-trained embeddings
+        if self.args.emb_file is None:
+            nn.init.uniform_(self.embeddings.weight, -init_range, init_range)
         
         for layer in self.hidden_layers:
             nn.init.uniform_(layer.weight, -init_range, init_range)

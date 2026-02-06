@@ -25,8 +25,10 @@ def get_args():
     parser.add_argument("--pooling_method", type=str, default="avg", choices=["sum", "avg", "max"])
     parser.add_argument("--grad_clip", type=float, default=5.0)
     parser.add_argument("--max_train_epoch", type=int, default=5)
+    parser.add_argument("--patience", type=int, default=0)  # early stopping patience (0 = disabled)
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--lrate", type=float, default=0.005)
+    parser.add_argument("--optimizer", type=str, default="adagrad", choices=["adagrad", "adam"])
     parser.add_argument("--lrate_decay", type=float, default=0)  # 0 means no decay!
     parser.add_argument("--mrate", type=float, default=0.85)
     parser.add_argument("--log_niter", type=int, default=100)
@@ -163,13 +165,19 @@ def main():
     print('nwords', nwords, 'ntags', ntags)
     model = mn.DanModel(args, word_vocab, len(tag_vocab)).to(device)
     loss_func = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adagrad(model.parameters(), lr=args.lrate, lr_decay=args.lrate_decay)
+    
+    # Optimizer: adam / adagrad
+    if args.optimizer == "adam":
+        optimizer = torch.optim.Adam(model.parameters(), lr=args.lrate)
+    else:
+        optimizer = torch.optim.Adagrad(model.parameters(), lr=args.lrate, lr_decay=args.lrate_decay)
 
     # Training
     start_time = time.time()
     train_iter = 0
     train_loss = train_example = train_correct = 0
     best_records = (0, 0)  # [best_iter, best_accuracy]
+    patience_counter = 0  # for early stopping
     for epoch in range(args.max_train_epoch):
         for batch in data_iter(train_data, batch_size=args.batch_size, shuffle=True):
             train_iter += 1
@@ -205,11 +213,24 @@ def main():
 
             if train_iter % args.eval_niter == 0:
                 print(f'Evaluate dev data:')
-                dev_accuracy = evaluate(dev_data, model, device) 
+                dev_accuracy = evaluate(dev_data, model, device)
                 if dev_accuracy > best_records[1]:
                     print(f'  -Update best model at {train_iter}, dev accuracy={dev_accuracy:.4f}')
                     best_records = (train_iter, dev_accuracy)
                     model.save(args.model)
+                    patience_counter = 0  # reset patience
+                else:
+                    # Only apply early stopping if patience > 0
+                    if args.patience > 0:
+                        patience_counter += 1
+                        print(f'  -No improvement. Patience: {patience_counter}/{args.patience}')
+                        if patience_counter >= args.patience:
+                            print(f'  -Early stopping triggered at iteration {train_iter}')
+                            break
+        
+        # Check if early stopping was triggered
+        if args.patience > 0 and patience_counter >= args.patience:
+            break
 
     # Load the best model
     model.load(args.model)
