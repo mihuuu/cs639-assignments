@@ -1,4 +1,4 @@
-# Assignment: BPE Tokenizer Training  
+# Assignment 2: BPE Tokenizer Training  
 **CS 639: Deep Learning for NLP**
 
 This assignment focuses on implementing a **byte-level Byte-Pair Encoding (BPE) tokenizer**, a core component in modern NLP systems. You will complete missing parts of a tokenizer training pipeline and train a tokenizer on real text data.
