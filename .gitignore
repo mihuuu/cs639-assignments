@@ -5,3 +5,5 @@ __pycache__
 *.txt
 *.zip
 *.pdf
+*.pkl
+*.lock
